@@ -1,49 +1,14 @@
 'use strict';
 
-const http = require('http');
+const express = require('express');
 const { randomUUID } = require('crypto');
 
 const host = process.env.SHIPPING_HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.SHIPPING_PORT || '9000', 10);
+const app = express();
+app.use(express.json({ limit: '1mb' }));
 
 const shipments = new Map();
-
-function sendJson(res, statusCode, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(statusCode, {
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(body)
-  });
-  res.end(body);
-}
-
-function parseBody(req) {
-  return new Promise((resolve, reject) => {
-    let body = '';
-
-    req.on('data', (chunk) => {
-      body += chunk;
-      if (body.length > 1024 * 1024) {
-        reject(new Error('Payload too large'));
-      }
-    });
-
-    req.on('end', () => {
-      if (!body) {
-        resolve({});
-        return;
-      }
-
-      try {
-        resolve(JSON.parse(body));
-      } catch (_error) {
-        reject(new Error('Invalid JSON body'));
-      }
-    });
-
-    req.on('error', reject);
-  });
-}
 
 function makeTrackingNumber(shipmentId) {
   return `TRK-${shipmentId.replace(/-/g, '').slice(0, 12).toUpperCase()}`;
@@ -69,55 +34,49 @@ function buildDefaultShipment(shipmentId) {
   };
 }
 
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+app.post('/shipments', (req, res) => {
+  try {
+    const payload = req.body || {};
+    const orderId = typeof payload.orderId === 'string' ? payload.orderId.trim() : '';
+    const destinationPostalCode =
+      typeof payload.destinationPostalCode === 'string' ? payload.destinationPostalCode.trim() : '';
 
-  if (req.method === 'POST' && url.pathname === '/shipments') {
-    try {
-      const payload = await parseBody(req);
-      const orderId = typeof payload.orderId === 'string' ? payload.orderId.trim() : '';
-      const destinationPostalCode =
-        typeof payload.destinationPostalCode === 'string' ? payload.destinationPostalCode.trim() : '';
-
-      if (!orderId) {
-        sendJson(res, 400, { error: 'orderId must be a non-empty string' });
-        return;
-      }
-
-      if (!destinationPostalCode) {
-        sendJson(res, 400, { error: 'destinationPostalCode must be a non-empty string' });
-        return;
-      }
-
-      const shipmentId = randomUUID();
-      const shipment = {
-        shipmentId,
-        orderId,
-        carrier: 'ACME_SHIP',
-        trackingNumber: makeTrackingNumber(shipmentId),
-        status: 'CREATED'
-      };
-
-      shipments.set(shipmentId, shipment);
-      sendJson(res, 201, toShipmentView(shipment));
-    } catch (error) {
-      sendJson(res, 400, { error: error.message || 'Invalid request body' });
+    if (!orderId) {
+      res.status(400).json({ error: 'orderId must be a non-empty string' });
+      return;
     }
 
-    return;
-  }
+    if (!destinationPostalCode) {
+      res.status(400).json({ error: 'destinationPostalCode must be a non-empty string' });
+      return;
+    }
 
-  const shipmentIdMatch = url.pathname.match(/^\/shipments\/([^/]+)$/);
-  if (req.method === 'GET' && shipmentIdMatch) {
-    const shipmentId = decodeURIComponent(shipmentIdMatch[1]);
-    const shipment = shipments.get(shipmentId) || buildDefaultShipment(shipmentId);
-    sendJson(res, 200, toShipmentView(shipment));
-    return;
-  }
+    const shipmentId = randomUUID();
+    const shipment = {
+      shipmentId,
+      orderId,
+      carrier: 'ACME_SHIP',
+      trackingNumber: makeTrackingNumber(shipmentId),
+      status: 'CREATED'
+    };
 
-  sendJson(res, 404, { error: 'Not found' });
+    shipments.set(shipmentId, shipment);
+    res.status(201).json(toShipmentView(shipment));
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Invalid request body' });
+  }
 });
 
-server.listen(port, host, () => {
+app.get('/shipments/:shipmentId', (req, res) => {
+  const shipmentId = decodeURIComponent(req.params.shipmentId);
+  const shipment = shipments.get(shipmentId) || buildDefaultShipment(shipmentId);
+  res.status(200).json(toShipmentView(shipment));
+});
+
+app.use((_req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+app.listen(port, host, () => {
   console.log(`shipping-service listening on http://${host}:${port}`);
 });
