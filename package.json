@@ -1,0 +1,9 @@
+{
+  "name": "shipping-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Demo shipping service for Specmatic contract tests",
+  "scripts": {
+    "start": "node src/index.js"
+  }
+}

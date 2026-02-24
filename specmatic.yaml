@@ -1,0 +1,23 @@
+version: 3
+systemUnderTest:
+  service:
+    $ref: "#/components/services/shippingService"
+    runOptions:
+      openapi:
+        port: 9000
+        host: localhost
+components:
+  sources:
+    centralContractRepo:
+      git:
+        url: https://github.com/specmatic-demo/central-contract-repository
+  services:
+    shippingService:
+      description: "Shipping Service"
+      definitions:
+        - definition:
+            source:
+              $ref: "#/components/sources/centralContractRepo"
+            specs:
+              - spec:
+                  path: "contracts/services/shipping-service/http/openapi.yaml"

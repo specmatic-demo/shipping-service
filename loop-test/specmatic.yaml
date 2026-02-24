@@ -1,0 +1,28 @@
+version: 3
+dependencies:
+  services:
+    - service:
+        $ref: "#/components/services/shippingService"
+        runOptions:
+          $ref: "#/components/runOptions/shippingServiceMock"
+components:
+  sources:
+    centralContractRepo:
+      git:
+        url: file:///Users/ketan/code/specmatic-demo-org/central-contract-repository
+  services:
+    shippingService:
+      description: "Shipping Service dependency"
+      definitions:
+        - definition:
+            source:
+              $ref: "#/components/sources/centralContractRepo"
+            specs:
+              - spec:
+                  path: "contracts/services/shipping-service/http/openapi.yaml"
+  runOptions:
+    shippingServiceMock:
+      openapi:
+        type: mock
+        port: 9000
+        host: localhost
