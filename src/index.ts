@@ -1,20 +1,26 @@
-'use strict';
-
-const express = require('express');
-const { randomUUID } = require('crypto');
+import { randomUUID } from 'node:crypto';
+import express, { type Request, type Response } from 'express';
 
 const host = process.env.SHIPPING_HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.SHIPPING_PORT || '9000', 10);
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
-const shipments = new Map();
+type Shipment = {
+  shipmentId: string;
+  orderId: string;
+  carrier: string;
+  trackingNumber: string;
+  status: 'CREATED' | 'IN_TRANSIT' | 'DELIVERED' | 'DELAYED';
+};
 
-function makeTrackingNumber(shipmentId) {
+const shipments = new Map<string, Shipment>();
+
+function makeTrackingNumber(shipmentId: string): string {
   return `TRK-${shipmentId.replace(/-/g, '').slice(0, 12).toUpperCase()}`;
 }
 
-function toShipmentView(shipment) {
+function toShipmentView(shipment: Shipment): Shipment {
   return {
     shipmentId: shipment.shipmentId,
     orderId: shipment.orderId,
@@ -24,7 +30,7 @@ function toShipmentView(shipment) {
   };
 }
 
-function buildDefaultShipment(shipmentId) {
+function buildDefaultShipment(shipmentId: string): Shipment {
   return {
     shipmentId,
     orderId: `order-${shipmentId}`,
@@ -34,7 +40,7 @@ function buildDefaultShipment(shipmentId) {
   };
 }
 
-app.post('/shipments', (req, res) => {
+app.post('/shipments', (req: Request, res: Response) => {
   try {
     const payload = req.body || {};
     const orderId = typeof payload.orderId === 'string' ? payload.orderId.trim() : '';
@@ -62,18 +68,18 @@ app.post('/shipments', (req, res) => {
 
     shipments.set(shipmentId, shipment);
     res.status(201).json(toShipmentView(shipment));
-  } catch (error) {
-    res.status(400).json({ error: error.message || 'Invalid request body' });
+  } catch (error: unknown) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid request body' });
   }
 });
 
-app.get('/shipments/:shipmentId', (req, res) => {
+app.get('/shipments/:shipmentId', (req: Request, res: Response) => {
   const shipmentId = decodeURIComponent(req.params.shipmentId);
   const shipment = shipments.get(shipmentId) || buildDefaultShipment(shipmentId);
   res.status(200).json(toShipmentView(shipment));
 });
 
-app.use((_req, res) => {
+app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: 'Not found' });
 });
 
