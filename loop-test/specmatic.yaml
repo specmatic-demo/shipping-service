@@ -9,7 +9,7 @@ components:
   sources:
     centralContractRepo:
       git:
-        url: file:///Users/ketan/code/specmatic-demo-org/central-contract-repository
+        url: https://github.com/specmatic-demo/central-contract-repository
   services:
     shippingService:
       description: "Shipping Service dependency"
