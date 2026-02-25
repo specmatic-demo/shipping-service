@@ -1,11 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import express, { type Request, type Response } from 'express';
+import { Kafka, type Consumer, type Producer } from 'kafkajs';
 import mqtt from 'mqtt';
 
 const host = process.env.SHIPPING_HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.SHIPPING_PORT || '9000', 10);
 const analyticsMqttUrl = process.env.ANALYTICS_MQTT_URL || 'mqtt://localhost:1883';
 const analyticsNotificationTopic = process.env.ANALYTICS_NOTIFICATION_TOPIC || 'notification/user';
+const shippingKafkaBrokers = (process.env.SHIPPING_KAFKA_BROKERS || 'localhost:9092')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const dispatchCommandTopic = process.env.SHIPPING_DISPATCH_COMMAND_TOPIC || 'queue.shipping.dispatch.command';
+const fulfillmentReplyTopic = process.env.SHIPPING_FULFILLMENT_REPLY_TOPIC || 'queue.order.fulfillment.reply';
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
@@ -26,7 +33,32 @@ type AnalyticsNotificationEvent = {
   priority: 'LOW' | 'NORMAL' | 'HIGH';
 };
 
+type DispatchCommandEvent = {
+  messageId: string;
+  requestId: string;
+  orderId: string;
+  carrier: string;
+  requestedAt: string;
+};
+
+type FulfillmentReplyEvent = {
+  messageId: string;
+  requestId: string;
+  orderId: string;
+  status: 'ACCEPTED' | 'REJECTED' | 'PARTIAL';
+  repliedAt: string;
+  trackingId?: string;
+  rejectionReason?: string;
+};
+
 const shipments = new Map<string, Shipment>();
+const kafka = new Kafka({
+  clientId: 'shipping-service',
+  brokers: shippingKafkaBrokers
+});
+const dispatchConsumer: Consumer = kafka.consumer({ groupId: 'shipping-service-dispatch' });
+const fulfillmentProducer: Producer = kafka.producer();
+let kafkaConnected = false;
 
 function publishAnalyticsNotification(event: AnalyticsNotificationEvent): void {
   const client = mqtt.connect(analyticsMqttUrl, { reconnectPeriod: 0, connectTimeout: 1000 });
@@ -61,6 +93,88 @@ function publishAnalyticsNotification(event: AnalyticsNotificationEvent): void {
     console.error(`Failed to connect to analytics MQTT broker (${analyticsMqttUrl}): ${error.message}`);
     clearTimeout(timeout);
     done();
+  });
+}
+
+function isDispatchCommandEvent(value: unknown): value is DispatchCommandEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const payload = value as Record<string, unknown>;
+  return (
+    typeof payload.messageId === 'string' &&
+    typeof payload.requestId === 'string' &&
+    typeof payload.orderId === 'string' &&
+    typeof payload.carrier === 'string' &&
+    typeof payload.requestedAt === 'string'
+  );
+}
+
+function buildFulfillmentReply(command: DispatchCommandEvent): FulfillmentReplyEvent {
+  if (Number.isNaN(Date.parse(command.requestedAt))) {
+    return {
+      messageId: randomUUID(),
+      requestId: command.requestId,
+      orderId: command.orderId,
+      status: 'REJECTED',
+      repliedAt: new Date().toISOString(),
+      rejectionReason: 'Invalid requestedAt'
+    };
+  }
+
+  return {
+    messageId: randomUUID(),
+    requestId: command.requestId,
+    orderId: command.orderId,
+    status: 'ACCEPTED',
+    repliedAt: new Date().toISOString(),
+    trackingId: makeTrackingNumber(randomUUID())
+  };
+}
+
+async function startDispatchCommandConsumer(): Promise<void> {
+  await dispatchConsumer.connect();
+  await fulfillmentProducer.connect();
+  kafkaConnected = true;
+
+  await dispatchConsumer.subscribe({ topic: dispatchCommandTopic, fromBeginning: false });
+  await dispatchConsumer.run({
+    eachMessage: async ({ message }) => {
+      if (!message.value) {
+        return;
+      }
+
+      let payload: unknown;
+      try {
+        payload = JSON.parse(message.value.toString('utf8')) as unknown;
+      } catch {
+        return;
+      }
+
+      if (!isDispatchCommandEvent(payload)) {
+        return;
+      }
+
+      const command = payload;
+      const reply = buildFulfillmentReply(command);
+
+      if (reply.status === 'ACCEPTED') {
+        const shipmentId = randomUUID();
+        shipments.set(shipmentId, {
+          shipmentId,
+          orderId: command.orderId,
+          carrier: command.carrier || 'ACME_SHIP',
+          trackingNumber: reply.trackingId || makeTrackingNumber(shipmentId),
+          status: 'CREATED'
+        });
+      }
+
+      await fulfillmentProducer.send({
+        topic: fulfillmentReplyTopic,
+        messages: [{ key: command.orderId, value: JSON.stringify(reply) }]
+      });
+    }
   });
 }
 
@@ -178,4 +292,30 @@ app.use((_req: Request, res: Response) => {
 
 app.listen(port, host, () => {
   console.log(`shipping-service listening on http://${host}:${port}`);
+  void startDispatchCommandConsumer()
+    .then(() => {
+      console.log(
+        `shipping-service kafka listener started on brokers=${shippingKafkaBrokers.join(',')} topic=${dispatchCommandTopic}`
+      );
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`shipping-service kafka listener failed to start: ${message}`);
+    });
+});
+
+async function shutdown(): Promise<void> {
+  if (kafkaConnected) {
+    await Promise.allSettled([dispatchConsumer.disconnect(), fulfillmentProducer.disconnect()]);
+  }
+
+  process.exit(0);
+}
+
+process.once('SIGINT', () => {
+  void shutdown();
+});
+
+process.once('SIGTERM', () => {
+  void shutdown();
 });

@@ -3,9 +3,7 @@ systemUnderTest:
   service:
     $ref: "#/components/services/shippingService"
     runOptions:
-      openapi:
-        port: 9000
-        host: localhost
+      $ref: "#/components/runOptions/shippingService"
 components:
   sources:
     centralContractRepo:
@@ -21,3 +19,19 @@ components:
             specs:
               - spec:
                   path: "contracts/services/shipping-service/http/openapi.yaml"
+              - spec:
+                  path: "contracts/services/shipping-service/events/asyncapi.yaml"
+  runOptions:
+    shippingService:
+      openapi:
+        type: test
+        port: 9000
+        host: localhost
+      asyncapi:
+        type: mock
+        inMemoryBroker:
+          host: localhost
+          port: 5409
+        servers:
+          - host: "localhost:5409"
+            protocol: kafka

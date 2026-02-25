@@ -4,3 +4,5 @@ services:
     container_name: shipping-service
     restart: unless-stopped
     network_mode: host
+    environment:
+      - SHIPPING_KAFKA_BROKERS=localhost:5409
