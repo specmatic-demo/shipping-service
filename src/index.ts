@@ -14,7 +14,8 @@ type Shipment = {
   orderId: string;
   carrier: string;
   trackingNumber: string;
-  status: 'CREATED' | 'IN_TRANSIT' | 'DELIVERED' | 'DELAYED';
+  status: 'CREATED' | 'IN_TRANSIT' | 'DELIVERED' | 'DELAYED' | 'CANCELLED';
+  cancelledAt?: string;
 };
 
 type AnalyticsNotificationEvent = {
@@ -131,6 +132,44 @@ app.get('/shipments/:shipmentId', (req: Request, res: Response) => {
   const shipmentId = decodeURIComponent(req.params.shipmentId);
   const shipment = shipments.get(shipmentId) || buildDefaultShipment(shipmentId);
   res.status(200).json(toShipmentView(shipment));
+});
+
+app.get('/shipments', (req: Request, res: Response) => {
+  const orderId = typeof req.query.orderId === 'string' ? req.query.orderId : undefined;
+  let list = Array.from(shipments.values());
+
+  if (list.length === 0) {
+    list = [{
+      shipmentId: randomUUID(),
+      orderId: orderId || 'order-default',
+      carrier: 'ACME_SHIP',
+      trackingNumber: makeTrackingNumber(randomUUID()),
+      status: 'IN_TRANSIT'
+    }];
+  }
+
+  const filtered = orderId ? list.filter((shipment) => shipment.orderId === orderId) : list;
+  res.status(200).json(filtered.map((shipment) => toShipmentView(shipment)));
+});
+
+app.post('/shipments/:shipmentId/cancel', (req: Request, res: Response) => {
+  const shipmentId = decodeURIComponent(req.params.shipmentId);
+  const existing = shipments.get(shipmentId) || buildDefaultShipment(shipmentId);
+  const cancelled: Shipment = {
+    ...existing,
+    status: 'CANCELLED',
+    cancelledAt: new Date().toISOString()
+  };
+
+  shipments.set(shipmentId, cancelled);
+  publishAnalyticsNotification({
+    notificationId: randomUUID(),
+    requestId: shipmentId,
+    title: 'ShipmentCancelled',
+    body: `Shipment ${shipmentId} cancelled`,
+    priority: 'NORMAL'
+  });
+  res.status(200).json(toShipmentView(cancelled));
 });
 
 app.use((_req: Request, res: Response) => {
