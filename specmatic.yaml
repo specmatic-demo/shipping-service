@@ -4,6 +4,12 @@ systemUnderTest:
     $ref: "#/components/services/shippingService"
     runOptions:
       $ref: "#/components/runOptions/shippingService"
+dependencies:
+  services:
+    - service:
+        $ref: "#/components/services/notificationServiceEvents"
+        runOptions:
+          $ref: "#/components/runOptions/notificationServiceEventsMock"
 components:
   sources:
     centralContractRepo:
@@ -21,6 +27,15 @@ components:
                   path: "contracts/services/shipping-service/http/openapi.yaml"
               - spec:
                   path: "contracts/services/shipping-service/events/asyncapi.yaml"
+    notificationServiceEvents:
+      description: "Notification Service events dependency"
+      definitions:
+        - definition:
+            source:
+              $ref: "#/components/sources/centralContractRepo"
+            specs:
+              - spec:
+                  path: "contracts/services/notification-service/events/asyncapi.yaml"
   runOptions:
     shippingService:
       openapi:
@@ -32,3 +47,9 @@ components:
         servers:
           - host: "localhost:5409"
             protocol: kafka
+    notificationServiceEventsMock:
+      asyncapi:
+        type: mock
+        servers:
+          - host: tcp://localhost:1883
+            protocol: mqtt
