@@ -2,6 +2,12 @@ import { randomUUID } from 'node:crypto';
 import express, { type Request, type Response } from 'express';
 import { Kafka, type Consumer, type Producer } from 'kafkajs';
 import mqtt from 'mqtt';
+import type {
+  AnalyticsNotificationEvent,
+  DispatchCommandEvent,
+  FulfillmentReplyEvent,
+  Shipment
+} from './types';
 
 const host = process.env.SHIPPING_HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.SHIPPING_PORT || '9000', 10);
@@ -15,41 +21,6 @@ const dispatchCommandTopic = process.env.SHIPPING_DISPATCH_COMMAND_TOPIC || 'que
 const fulfillmentReplyTopic = process.env.SHIPPING_FULFILLMENT_REPLY_TOPIC || 'queue.order.fulfillment.reply';
 const app = express();
 app.use(express.json({ limit: '1mb' }));
-
-type Shipment = {
-  shipmentId: string;
-  orderId: string;
-  carrier: string;
-  trackingNumber: string;
-  status: 'CREATED' | 'IN_TRANSIT' | 'DELIVERED' | 'DELAYED' | 'CANCELLED';
-  cancelledAt?: string;
-};
-
-type AnalyticsNotificationEvent = {
-  notificationId: string;
-  requestId: string;
-  title: string;
-  body: string;
-  priority: 'LOW' | 'NORMAL' | 'HIGH';
-};
-
-type DispatchCommandEvent = {
-  messageId: string;
-  requestId: string;
-  orderId: string;
-  carrier: string;
-  requestedAt: string;
-};
-
-type FulfillmentReplyEvent = {
-  messageId: string;
-  requestId: string;
-  orderId: string;
-  status: 'ACCEPTED' | 'REJECTED' | 'PARTIAL';
-  repliedAt: string;
-  trackingId?: string;
-  rejectionReason?: string;
-};
 
 const shipments = new Map<string, Shipment>();
 const kafka = new Kafka({

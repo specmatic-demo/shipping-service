@@ -28,10 +28,7 @@ components:
         port: 9000
         host: localhost
       asyncapi:
-        type: mock
-        inMemoryBroker:
-          host: localhost
-          port: 5409
+        type: test
         servers:
           - host: "localhost:5409"
             protocol: kafka
