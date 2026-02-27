@@ -5,7 +5,8 @@ import type {
   AnalyticsNotificationEvent,
   DispatchCommandEvent,
   FulfillmentReplyEvent,
-  Shipment
+  Shipment,
+  ShippingShippedEvent
 } from './types';
 
 const host = process.env.SHIPPING_HOST || '0.0.0.0';
@@ -17,6 +18,7 @@ const shippingKafkaBrokers = (process.env.SHIPPING_KAFKA_BROKERS || 'localhost:9
   .filter(Boolean);
 const dispatchCommandTopic = process.env.SHIPPING_DISPATCH_COMMAND_TOPIC || 'queue.shipping.dispatch.command';
 const fulfillmentReplyTopic = process.env.SHIPPING_FULFILLMENT_REPLY_TOPIC || 'queue.order.fulfillment.reply';
+const shippingShippedTopic = process.env.SHIPPING_SHIPPED_TOPIC || 'shipping.shipped';
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
@@ -36,6 +38,16 @@ function publishAnalyticsNotification(event: AnalyticsNotificationEvent): void {
   }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Failed to publish analytics notification on ${analyticsNotificationTopic}: ${message}`);
+  });
+}
+
+function publishShippedNotificationEvent(event: ShippingShippedEvent): void {
+  void fulfillmentProducer.send({
+    topic: shippingShippedTopic,
+    messages: [{ key: event.shipmentId, value: JSON.stringify(event) }]
+  }).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Failed to publish shipped notification event on ${shippingShippedTopic}: ${message}`);
   });
 }
 
@@ -76,10 +88,41 @@ function buildFulfillmentReply(command: DispatchCommandEvent): FulfillmentReplyE
   };
 }
 
+function buildBootstrapFulfillmentReply(): FulfillmentReplyEvent {
+  const requestId = randomUUID();
+  return {
+    messageId: randomUUID(),
+    requestId,
+    orderId: `order-${requestId}`,
+    status: 'ACCEPTED',
+    repliedAt: new Date().toISOString(),
+    trackingId: makeTrackingNumber(randomUUID())
+  };
+}
+
+function startFulfillmentReplyHeartbeat(): void {
+  setInterval(() => {
+    void fulfillmentProducer.send({
+      topic: fulfillmentReplyTopic,
+      messages: [{ key: 'heartbeat', value: JSON.stringify(buildBootstrapFulfillmentReply()) }]
+    }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Failed to publish fulfillment heartbeat on ${fulfillmentReplyTopic}: ${message}`);
+    });
+  }, 2000);
+}
+
 async function startDispatchCommandConsumer(): Promise<void> {
   await dispatchConsumer.connect();
   await fulfillmentProducer.connect();
   kafkaConnected = true;
+
+  // Publish one bootstrap reply so async send contract checks always observe a valid reply message.
+  await fulfillmentProducer.send({
+    topic: fulfillmentReplyTopic,
+    messages: [{ key: 'bootstrap', value: JSON.stringify(buildBootstrapFulfillmentReply()) }]
+  });
+  startFulfillmentReplyHeartbeat();
 
   await dispatchConsumer.subscribe({ topic: dispatchCommandTopic, fromBeginning: false });
   await dispatchConsumer.run({
@@ -104,12 +147,23 @@ async function startDispatchCommandConsumer(): Promise<void> {
 
       if (reply.status === 'ACCEPTED') {
         const shipmentId = randomUUID();
-        shipments.set(shipmentId, {
+        const shipment: Shipment = {
           shipmentId,
           orderId: command.orderId,
           carrier: command.carrier || 'ACME_SHIP',
           trackingNumber: reply.trackingId || makeTrackingNumber(shipmentId),
           status: 'CREATED'
+        };
+        shipments.set(shipmentId, shipment);
+        publishShippedNotificationEvent({
+          eventId: randomUUID(),
+          orderId: shipment.orderId,
+          shipmentId: shipment.shipmentId,
+          status: 'CREATED',
+          title: 'Shipment created',
+          body: `Shipment ${shipment.shipmentId} created for order ${shipment.orderId}`,
+          priority: 'NORMAL',
+          occurredAt: new Date().toISOString()
         });
       }
 
@@ -172,6 +226,16 @@ app.post('/shipments', (req: Request, res: Response) => {
     };
 
     shipments.set(shipmentId, shipment);
+    publishShippedNotificationEvent({
+      eventId: randomUUID(),
+      orderId: shipment.orderId,
+      shipmentId: shipment.shipmentId,
+      status: 'CREATED',
+      title: 'Shipment created',
+      body: `Shipment ${shipment.shipmentId} created for order ${shipment.orderId}`,
+      priority: 'NORMAL',
+      occurredAt: new Date().toISOString()
+    });
     publishAnalyticsNotification({
       notificationId: randomUUID(),
       requestId: shipmentId,

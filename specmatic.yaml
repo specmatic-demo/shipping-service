@@ -51,5 +51,5 @@ components:
       asyncapi:
         type: mock
         servers:
-          - host: localhost:9092
+          - host: localhost:5409
             protocol: kafka

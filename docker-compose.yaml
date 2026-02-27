@@ -49,4 +49,5 @@ services:
         condition: service_healthy
     entrypoint: ["/bin/bash", "-lc"]
     command: >
-       /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic queue.order.fulfillment.reply --partitions 1 --replication-factor 1"
+      "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic queue.order.fulfillment.reply --partitions 1 --replication-factor 1 &&
+       /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic shipping.shipped --partitions 1 --replication-factor 1"
