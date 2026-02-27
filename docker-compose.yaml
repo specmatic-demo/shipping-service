@@ -12,6 +12,7 @@ services:
       - "9000:9000"
     environment:
       - SHIPPING_KAFKA_BROKERS=kafka:9092
+      - ANALYTICS_KAFKA_BROKERS=kafka:9092
   kafka:
     image: apache/kafka:latest
     container_name: shipping-service-kafka
@@ -49,8 +50,3 @@ services:
     entrypoint: ["/bin/bash", "-lc"]
     command: >
        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic queue.order.fulfillment.reply --partitions 1 --replication-factor 1"
-  mqtt:
-    image: eclipse-mosquitto:2
-    container_name: order-service-mqtt
-    restart: unless-stopped
-    network_mode: host

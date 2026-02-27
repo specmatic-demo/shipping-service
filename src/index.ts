@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import express, { type Request, type Response } from 'express';
 import { Kafka, type Consumer, type Producer } from 'kafkajs';
-import mqtt from 'mqtt';
 import type {
   AnalyticsNotificationEvent,
   DispatchCommandEvent,
@@ -11,8 +10,7 @@ import type {
 
 const host = process.env.SHIPPING_HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.SHIPPING_PORT || '9000', 10);
-const analyticsMqttUrl = process.env.ANALYTICS_MQTT_URL || 'mqtt://localhost:1883';
-const analyticsNotificationTopic = process.env.ANALYTICS_NOTIFICATION_TOPIC || 'notification/user';
+const analyticsNotificationTopic = process.env.ANALYTICS_NOTIFICATION_TOPIC || 'notification.user';
 const shippingKafkaBrokers = (process.env.SHIPPING_KAFKA_BROKERS || 'localhost:9092')
   .split(',')
   .map((value) => value.trim())
@@ -32,38 +30,12 @@ const fulfillmentProducer: Producer = kafka.producer();
 let kafkaConnected = false;
 
 function publishAnalyticsNotification(event: AnalyticsNotificationEvent): void {
-  const client = mqtt.connect(analyticsMqttUrl, { reconnectPeriod: 0, connectTimeout: 1000 });
-  const payload = JSON.stringify(event);
-  let completed = false;
-
-  const done = (): void => {
-    if (completed) {
-      return;
-    }
-
-    completed = true;
-    client.end(true);
-  };
-
-  const timeout = setTimeout(() => {
-    done();
-  }, 1500);
-
-  client.once('connect', () => {
-    client.publish(analyticsNotificationTopic, payload, { qos: 1 }, (error?: Error | null) => {
-      if (error) {
-        console.error(`Failed to publish analytics notification on ${analyticsNotificationTopic}: ${error.message}`);
-      }
-
-      clearTimeout(timeout);
-      done();
-    });
-  });
-
-  client.once('error', (error: Error) => {
-    console.error(`Failed to connect to analytics MQTT broker (${analyticsMqttUrl}): ${error.message}`);
-    clearTimeout(timeout);
-    done();
+  void fulfillmentProducer.send({
+    topic: analyticsNotificationTopic,
+    messages: [{ key: event.requestId, value: JSON.stringify(event) }]
+  }).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Failed to publish analytics notification on ${analyticsNotificationTopic}: ${message}`);
   });
 }
 
